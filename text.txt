@@ -1,0 +1,139 @@
+Встраивание авторизации в проект на архитектуре MVC (Model-View-Controller) строится на использовании сессий ($_SESSION в PHP). Сессия позволяет серверу «помнить» пользователя между переходами по страницам.
+Ниже описана готовая пошаговая структура, как распределить логику авторизации по слоям MVC.
+1. База данных (Таблица пользователей)
+Для начала убедитесь, что в таблице users пароли хранятся в защищенном виде (через хэш password_hash).
+sql
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL
+);
+Используйте код с осторожностью.
+2. Model (Модель)
+Модель отвечает только за работу с базой данных: поиск пользователя и проверку его пароля. Используем ваш метод checkLogin для проверки уникальности при регистрации, и добавим метод authenticate для входа.
+php
+class UserModel {
+    private $db; // Ваш объект PDO
+
+    // Проверка, занято ли имя (использовался в вашем прошлом вопросе)
+    public function isNameTaken(string $name): bool {
+        $stmt = $this->db->prepare("SELECT id FROM users WHERE name = :name");
+        $stmt->execute(['name' => $name]);
+        return $stmt->rowCount() > 0;
+    }
+
+    // Проверка пароля при входе
+    public function authenticate(string $name, string $password) {
+        $stmt = $this->db->prepare("SELECT * FROM users WHERE name = :name");
+        $stmt->execute(['name' => $name]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        // Если пользователь найден и пароль совпадает
+        if ($user && password_verify($password, $user['password_hash'])) {
+            return $user; // Возвращаем массив с данными пользователя
+        }
+        return false;
+    }
+}
+Используйте код с осторожностью.
+3. Controller (Контроллер)
+Контроллер принимает данные из формы (View), дергает Модель (Model) и управляет сессией.
+php
+class AuthController {
+    private $userModel;
+
+    public function __construct($userModel) {
+        $this->userModel = $userModel;
+    }
+
+    // Обработка отправки формы входа
+    public function login() {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $name = trim($_POST['name'] ?? '');
+            $password = $_POST['password'] ?? '';
+
+            $user = $this->userModel->authenticate($name, $password);
+
+            if ($user) {
+                // Старт сессии и запись данных
+                if (session_status() === PHP_SESSION_NONE) {
+                    session_start();
+                }
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['user_name'] = $user['name'];
+
+                // Перенаправление в личный кабинет
+                header("Location: /dashboard");
+                exit;
+            } else {
+                $error = "Неверное имя пользователя или пароль";
+                // Подгружаем View формы входа и передаем ошибку
+                require_once 'views/login.php';
+            }
+        }
+    }
+
+    // Выход из системы
+    public function logout() {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        session_destroy(); // Удаляем сессию
+        header("Location: /login");
+        exit;
+    }
+}
+Используйте код с осторожностью.
+4. Проверка авторизации (Middleware / Роутинг)
+Чтобы закрыть определенные страницы от гостей, создайте вспомогательный класс или функцию-фильтр. Ее нужно вызывать в контроллерах закрытых страниц (например, DashboardController).
+php
+class AuthMiddleware {
+    public static function check() {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        
+        // Если в сессии нет ID пользователя, отправляем на вход
+        if (!isset($_SESSION['user_id'])) {
+            header("Location: /login");
+            exit;
+        }
+    }
+}
+Используйте код с осторожностью.
+Пример использования в закрытом контроллере:
+php
+class DashboardController {
+    public function index() {
+        // Защищаем страницу: если не залогинен, код дальше не выполнится
+        AuthMiddleware::check(); 
+
+        // Логика личного кабинета
+        $userName = $_SESSION['user_name'];
+        require_once 'views/dashboard.php';
+    }
+}
+Используйте код с осторожностью.
+5. View (Представление)
+Внутри любого HTML-шаблона вы теперь можете проверять, авторизован ли пользователь, чтобы менять интерфейс:
+php
+<?php if (isset($_SESSION['user_id'])): ?>
+    <p>Привет, <?= htmlspecialchars($_SESSION['user_name']) ?>! <a href="/logout">Выйти</a></p>
+<?php else: ?>
+    <a href="/login">Войти</a>
+<?php endif; ?>
+Используйте код с осторожностью.
+С чего начать внедрение:
+Убедитесь, что в самом начале вашего единого входного файла (обычно index.php) вызывается session_start().
+Создайте AuthMiddleware для контроля доступа.
+Уточните, как у вас сейчас устроен роутинг (маршрутизация) в проекте? Я могу подсказать, как изящнее встроить туда проверку авторизации.
+
+
+
+
+
+Задайте вопрос
+
+
+Ответ от режима ИИ готов.
+Задать вопрос по теме:
